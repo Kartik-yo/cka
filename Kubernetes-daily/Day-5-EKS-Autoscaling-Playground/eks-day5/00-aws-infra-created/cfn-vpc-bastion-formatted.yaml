@@ -1,0 +1,267 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EKS Learning Environment with VPC, Subnets, and Bastion Host for
+  HPA, VPA, KEDA, CA practice
+
+Parameters:
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 Key Pair for SSH access to bastion host
+
+  YourIPAddress:
+    Type: String
+    Description: Your IP address in CIDR format (e.g., 203.0.113.0/32) for SSH access
+    AllowedPattern: ^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$
+    ConstraintDescription: Must be a valid IP CIDR range (x.x.x.x/x)
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI
+
+Resources:
+  # VPC
+  EksVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: eks-learning-vpc
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref EksVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref EksVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: eks-public-subnet
+        - Key: kubernetes.io/role/elb
+          Value: '1'
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref EksVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: eks-private-subnet-1
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+
+  # Private Subnet 2 (this fixes the "insufficient subnets" error)
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref EksVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: eks-private-subnet-2
+        - Key: kubernetes.io/role/internal-elb
+          Value: '1'
+
+  # NAT Gateway
+  NatEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref EksVPC
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref EksVPC
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnet1Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+  PrivateSubnet2Assoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Bastion Security Group
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Bastion SSH only
+      VpcId: !Ref EksVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref YourIPAddress
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  # Bastion IAM Role (kept your generous permissions)
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: eks-bastion-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Policies:
+        - PolicyName: EKSAdminAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:*
+                  - ec2:Describe*
+                  - iam:GetRole
+                  - iam:ListRoles
+                  - cloudformation:*
+                Resource: '*'
+
+  BastionInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref BastionRole
+
+  # Bastion Host (Amazon Linux 2023)
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref BastionInstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref BastionSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      UserData: !Base64
+        Fn::Sub: |
+          #!/bin/bash
+          dnf update -y
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl && mv kubectl /usr/local/bin/
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp && mv /tmp/eksctl /usr/local/bin
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && ./aws/install && rm -rf aws awscliv2.zip
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          su - ec2-user -c "helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/"
+          su - ec2-user -c "helm repo add kedacore https://kedacore.github.io/charts"
+          su - ec2-user -c "helm repo add fairwinds-stable https://charts.fairwinds.com/stable"
+          su - ec2-user -c "helm repo update"
+          dnf install -y git jq
+          echo 'source <(kubectl completion bash)' >> /home/ec2-user/.bashrc
+          echo 'alias k=kubectl' >> /home/ec2-user/.bashrc
+          echo 'complete -F __start_kubectl k' >> /home/ec2-user/.bashrc
+          echo "Setup complete! Run: eksctl create cluster --name eks-learning --without-nodegroup" > /home/ec2-user/WELCOME.txt
+          chown ec2-user:ec2-user /home/ec2-user/WELCOME.txt
+
+  # (Optional) EKS Cluster Role & SG ? kept exactly as you had them
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: eks-cluster-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: EKS control plane SG
+      VpcId: !Ref EksVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref BastionSecurityGroup
+
+Outputs:
+  VPCId:
+    Value: !Ref EksVPC
+  PublicSubnetId:
+    Value: !Ref PublicSubnet
+  PrivateSubnetIds:
+    Value: !Join
+      - ','
+      - - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+  BastionHostPublicIP:
+    Value: !GetAtt BastionHost.PublicIp
+  SSHCommand:
+    Value: !Sub ssh -i ${KeyPairName}.pem ec2-user@${BastionHost.PublicIp}
