@@ -1,0 +1,16 @@
+=== CloudFormation Stacks ===
+eksctl-eks-learning-addon-iamserviceaccount-kube-system-cluster-autoscaler
+eksctl-eks-learning-nodegroup-standard-nodes
+eksctl-eks-learning-cluster
+eks-learning-stack
+rev-cf-aasign
+
+=== EKS Cluster & Nodegroups ===
+NAME: eks-learning
+NODEGROUP: standard-nodes (t3.medium, 1–4 nodes, desired=2)
+
+=== Auto Scaling Group ===
+eks-standard-nodes-14cd7473-30f9-bd86-bf5d-6f645ac63168
+
+=== IRSA Role for Cluster Autoscaler ===
+eksctl-eks-learning-addon-iamserviceaccount-k-Role1-VkzAnVJ6s5WI

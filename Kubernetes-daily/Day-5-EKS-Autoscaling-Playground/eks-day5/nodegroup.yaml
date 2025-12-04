@@ -1,0 +1,14 @@
+- AutoScalingGroupName: eks-standard-nodes-14cd7473-30f9-bd86-bf5d-6f645ac63168
+  Cluster: eks-learning
+  CreationTime: "2025-12-04T10:26:45.114Z"
+  DesiredCapacity: 2
+  ImageID: AL2023_x86_64_STANDARD
+  InstanceType: t3.medium
+  MaxSize: 4
+  MinSize: 1
+  Name: standard-nodes
+  NodeInstanceRoleARN: arn:aws:iam::169020557702:role/eksctl-eks-learning-nodegroup-stan-NodeInstanceRole-ReoGqQaJoaVE
+  StackName: eksctl-eks-learning-nodegroup-standard-nodes
+  Status: ACTIVE
+  Type: managed
+  Version: "1.32"
