@@ -12,3 +12,27 @@
   Status: ACTIVE
   Type: managed
   Version: "1.32"
+
+
+# ──────────────── CLEAN, REUSABLE eksctl CONFIG (use this to recreate) ────────────────
+# apiVersion: eksctl.io/v1alpha5
+# kind: ClusterConfig
+
+# metadata:
+#   name: eks-learning
+#   region: us-east-1
+
+# managedNodeGroups:
+#   - name: standard-nodes
+#     instanceType: t3.medium
+#     minSize: 1
+#     maxSize: 4
+#     desiredCapacity: 2
+#     volumeSize: 20
+#     labels:
+#       role: worker
+#     tags:
+#       k8s.io/cluster-autoscaler/enabled: "true"
+#       k8s.io/cluster-autoscaler/eks-learning: "true"
+#     ssh:
+#       allow: false
